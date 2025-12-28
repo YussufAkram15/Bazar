@@ -1,6 +1,6 @@
 // js/main.js
 
-const PRODUCTS_URL = 'data/products.json';
+const PRODUCTS_URL = 'http://localhost:5001/api/products';
 const CART_KEY = 'bazar_cart';
 
 // Utility: format price
@@ -74,7 +74,7 @@ function celebrate() {
     // Fallback if confetti library not loaded
     return;
   }
-  
+
   const duration = 2000;
   const animationEnd = Date.now() + duration;
   const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 0 };
@@ -83,7 +83,7 @@ function celebrate() {
     return Math.random() * (max - min) + min;
   }
 
-  const interval = setInterval(function() {
+  const interval = setInterval(function () {
     const timeLeft = animationEnd - Date.now();
 
     if (timeLeft <= 0) {
@@ -91,14 +91,14 @@ function celebrate() {
     }
 
     const particleCount = 50 * (timeLeft / duration);
-    
+
     // Confetti from left
     confetti({
       ...defaults,
       particleCount,
       origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 }
     });
-    
+
     // Confetti from right
     confetti({
       ...defaults,
@@ -127,10 +127,10 @@ function addToCart(product) {
     });
   }
   saveCart(cart);
-  
+
   // Show notification
   showCartNotification(product);
-  
+
   // Celebration effect
   celebrate();
 }
@@ -368,6 +368,7 @@ function loadCartPage() {
   }
 }
 
+
 // Load checkout summary and handle form
 function loadCheckoutPage() {
   const itemsCountEl = document.getElementById('summary-items-count');
@@ -382,21 +383,194 @@ function loadCheckoutPage() {
   if (totalEl) totalEl.textContent = formatPrice(total);
 
   if (form) {
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const name = document.getElementById('name');
       const address = document.getElementById('address');
+      const email = document.getElementById('email');
 
       if (!name.value.trim() || !address.value.trim()) {
         alert('Please fill in the required fields.');
         return;
       }
 
-      alert('Order Placed');
-      localStorage.removeItem(CART_KEY);
-      updateCartCount();
-      form.reset();
+      // Place order via API
+      const result = await placeOrder(cart, name.value, address.value, email.value);
+
+      if (result.success) {
+        alert(`Order Placed Successfully! Order ID: ${result.order_id}`);
+        localStorage.removeItem(CART_KEY);
+        updateCartCount();
+        form.reset();
+      } else {
+        alert('Failed to place order: ' + (result.error || 'Unknown error'));
+      }
     });
+  }
+}
+
+// ============ USER AUTHENTICATION ============
+
+const API_URL = 'http://localhost:5001/api';
+const USER_KEY = 'bazar_user';
+
+// Get current logged-in user
+function getCurrentUser() {
+  try {
+    const stored = localStorage.getItem(USER_KEY);
+    return stored ? JSON.parse(stored) : null;
+  } catch (e) {
+    console.error('Error parsing user from localStorage', e);
+    return null;
+  }
+}
+
+// Save user to localStorage
+function saveUser(user) {
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+  updateNavbar();
+}
+
+// Logout user
+function logout() {
+  localStorage.removeItem(USER_KEY);
+  updateNavbar();
+  window.location.href = 'index.html';
+}
+
+// Update navbar to show logged-in user
+function updateNavbar() {
+  const user = getCurrentUser();
+  const loginBtn = document.querySelector('.navbar-nav .btn-outline-primary, .navbar-nav .btn-primary');
+
+  if (loginBtn) {
+    if (user) {
+      loginBtn.outerHTML = `
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+            ${user.email}
+          </a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#" onclick="logout(); return false;">Logout</a></li>
+          </ul>
+        </li>
+      `;
+    }
+  }
+}
+
+
+// Login page functionality
+function initLoginPage() {
+  const form = document.getElementById('auth-form');
+  const toggleMode = document.getElementById('toggle-mode');
+  const formTitle = document.getElementById('form-title');
+  const submitBtn = document.getElementById('submit-btn');
+  const toggleText = document.getElementById('toggle-text');
+  const nameField = document.getElementById('name-field');
+  const rememberMeField = document.getElementById('remember-me-field');
+  const messageDiv = document.getElementById('auth-message');
+
+  let isLoginMode = true;
+
+  // Toggle between login and register
+  toggleMode.addEventListener('click', (e) => {
+    e.preventDefault();
+    isLoginMode = !isLoginMode;
+
+    if (isLoginMode) {
+      formTitle.textContent = 'Login';
+      submitBtn.textContent = 'Sign In';
+      toggleText.textContent = "Don't have an account?";
+      toggleMode.textContent = 'Register';
+      nameField.classList.add('d-none');
+      rememberMeField.classList.remove('d-none');
+    } else {
+      formTitle.textContent = 'Register';
+      submitBtn.textContent = 'Create Account';
+      toggleText.textContent = 'Already have an account?';
+      toggleMode.textContent = 'Login';
+      nameField.classList.remove('d-none');
+      rememberMeField.classList.add('d-none');
+    }
+
+    messageDiv.classList.add('d-none');
+  });
+
+  // Handle form submission
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+    const name = document.getElementById('login-name').value;
+
+    messageDiv.classList.add('d-none');
+
+    try {
+      const endpoint = isLoginMode ? '/login' : '/register';
+      const body = isLoginMode
+        ? { email, password }
+        : { email, password, name };
+
+      const response = await fetch(API_URL + endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        saveUser(data.user);
+        messageDiv.className = 'alert alert-success mt-3';
+        messageDiv.textContent = isLoginMode ? 'Login successful!' : 'Registration successful!';
+        messageDiv.classList.remove('d-none');
+
+        setTimeout(() => {
+          window.location.href = 'index.html';
+        }, 1000);
+      } else {
+        messageDiv.className = 'alert alert-danger mt-3';
+        messageDiv.textContent = data.error || 'An error occurred';
+        messageDiv.classList.remove('d-none');
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      messageDiv.className = 'alert alert-danger mt-3';
+      messageDiv.textContent = 'Failed to connect to server';
+      messageDiv.classList.remove('d-none');
+    }
+  });
+}
+
+// Update checkout to save order
+async function placeOrder(cart, name, address, email) {
+  const user = getCurrentUser();
+
+  try {
+    const response = await fetch(API_URL + '/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cart: cart,
+        user_id: user ? user.id : null,
+        name: name,
+        address: address,
+        email: email
+      })
+    });
+
+    const data = await response.json();
+
+    if (response.ok && data.success) {
+      return { success: true, order_id: data.order_id };
+    } else {
+      return { success: false, error: data.error };
+    }
+  } catch (error) {
+    console.error('Error placing order:', error);
+    return { success: false, error: 'Failed to connect to server' };
   }
 }
 
@@ -407,6 +581,7 @@ function initCommon() {
     yearEl.textContent = new Date().getFullYear();
   }
   updateCartCount();
+  updateNavbar();
 }
 
 // Main entry point
@@ -429,10 +604,10 @@ document.addEventListener('DOMContentLoaded', () => {
       loadCheckoutPage();
       break;
     case 'login':
+      initLoginPage();
+      break;
     default:
       // No specific JS needed
       break;
   }
 });
-
-
